@@ -1,19 +1,46 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using Melanchall.DryWetMidi.Common;
+using Melanchall.DryWetMidi.Smf;
 
 namespace Melanchall.DryWetMidi.Devices
 {
     public sealed class OutputDevice : MidiDevice
     {
+        #region Constants
+
+        private const int ChannelEventBufferSize = 3;
+        private static readonly byte[] ZeroBuffer = new byte[ChannelEventBufferSize];
+
+        #endregion
+
+        #region Events
+
+        public event EventHandler<MidiEventSentEventArgs> EventSent;
+
+        #endregion
+
+        #region Fields
+
+        private readonly MemoryStream _memoryStream = new MemoryStream(ChannelEventBufferSize);
+        private readonly MidiWriter _midiWriter;
+        private readonly WritingSettings _writingSettings = new WritingSettings();
+
+        private byte? _runningStatus = null;
+
+        #endregion
+
         #region Constructor
 
         internal OutputDevice(uint id)
             : base(id)
         {
+            _midiWriter = new MidiWriter(_memoryStream);
+
             SetDeviceInformation();
         }
 
@@ -29,9 +56,49 @@ namespace Melanchall.DryWetMidi.Devices
 
         public IEnumerable<FourBitNumber> Channels { get; private set; }
 
+        public bool SupportsPatchCaching { get; private set; }
+
+        public bool SupportsLeftRightVolumeControl { get; private set; }
+
+        public bool SupportsVolumeControl { get; private set; }
+
+        public bool UseRunningStatus
+        {
+            get { return _writingSettings.CompressionPolicy.HasFlag(CompressionPolicy.UseRunningStatus); }
+            set { _writingSettings.CompressionPolicy &= ~CompressionPolicy.UseRunningStatus; }
+        }
+
         #endregion
 
         #region Methods
+
+        public void SendEvent(MidiEvent midiEvent)
+        {
+            EnsureDeviceIsNotDisposed();
+
+            ThrowIfArgument.IsNull(nameof(midiEvent), midiEvent);
+
+            if (midiEvent is MetaEvent)
+                throw new ArgumentException("Meta events cannot be sent via MIDI device.", nameof(midiEvent));
+
+            if (_handle == IntPtr.Zero)
+                Open();
+
+            var channelEvent = midiEvent as ChannelEvent;
+            if (channelEvent != null)
+            {
+                SendChannelEvent(channelEvent);
+                return;
+            }
+
+            _runningStatus = null;
+
+            var sysExEvent = midiEvent as SysExEvent;
+            if (sysExEvent != null)
+            {
+                // TODO: implement sending SysEx events
+            }
+        }
 
         public static int GetDevicesCount()
         {
@@ -53,6 +120,26 @@ namespace Melanchall.DryWetMidi.Devices
             return GetAll().FirstOrDefault(d => d.Name == name);
         }
 
+        protected override void OnEvent(MidiEvent midiEvent, int milliseconds)
+        {
+            EventSent?.Invoke(this, new MidiEventSentEventArgs(midiEvent));
+        }
+
+        internal override MMRESULT OpenDevice(out IntPtr lpmidi, uint uDeviceID, MidiWinApi.MidiMessageCallback dwCallback, IntPtr dwInstance, uint dwFlags)
+        {
+            return MidiOutWinApi.midiOutOpen(out lpmidi, uDeviceID, dwCallback, dwInstance, dwFlags);
+        }
+
+        internal override MMRESULT CloseDevice(IntPtr hmidi)
+        {
+            return MidiOutWinApi.midiOutClose(hmidi);
+        }
+
+        internal override MMRESULT GetErrorText(MMRESULT mmrError, StringBuilder pszText, uint cchText)
+        {
+            return MidiOutWinApi.midiOutGetErrorText(mmrError, pszText, cchText);
+        }
+
         private void SetDeviceInformation()
         {
             var caps = default(MidiOutWinApi.MIDIOUTCAPS);
@@ -68,47 +155,28 @@ namespace Melanchall.DryWetMidi.Devices
                         let isChannelSupported = (caps.wChannelMask >> i) & 1
                         where isChannelSupported == 1
                         select channel).ToArray();
+
+            var support = (MidiOutWinApi.MIDICAPS)caps.dwSupport;
+            SupportsPatchCaching = support.HasFlag(MidiOutWinApi.MIDICAPS.MIDICAPS_CACHE);
+            SupportsVolumeControl = support.HasFlag(MidiOutWinApi.MIDICAPS.MIDICAPS_VOLUME);
+            SupportsLeftRightVolumeControl = support.HasFlag(MidiOutWinApi.MIDICAPS.MIDICAPS_LRVOLUME);
         }
 
-        private void EnsureDeviceIsNotDisposed()
+        private void SendChannelEvent(ChannelEvent channelEvent)
         {
-            if (_disposed)
-                throw new ObjectDisposedException("Device is disposed.");
-        }
+            var eventWriter = EventWriterFactory.GetWriter(channelEvent);
 
-        private static void ProcessMmResult(Func<MMRESULT> method)
-        {
-            var mmResult = method();
-            if (mmResult == MMRESULT.MMSYSERR_NOERROR)
-                return;
+            var statusByte = eventWriter.GetStatusByte(channelEvent);
+            var writeStatusByte = _runningStatus != statusByte || !UseRunningStatus;
+            _runningStatus = statusByte;
 
-            var stringBuilder = new StringBuilder((int)MidiOutWinApi.MAXERRORLENGTH);
-            var getErrorTextResult = MidiOutWinApi.midiOutGetErrorText(mmResult, stringBuilder, MidiOutWinApi.MAXERRORLENGTH + 1);
-            if (getErrorTextResult != MMRESULT.MMSYSERR_NOERROR)
-                throw new MidiDeviceException("Error occured but failed to get description for it.");
+            WriteBytesToStream(_memoryStream, ZeroBuffer);
+            eventWriter.Write(channelEvent, _midiWriter, _writingSettings, writeStatusByte);
 
-            var errorText = stringBuilder.ToString();
-            throw new MidiDeviceException(errorText);
-        }
+            var bytes = _memoryStream.GetBuffer();
+            var message = bytes[0] + (bytes[1] << 8) + (bytes[2] << 16);
 
-        #endregion
-
-        #region IDisposable
-
-        protected override void Dispose(bool disposing)
-        {
-            if (_disposed)
-                return;
-
-            if (disposing)
-            {
-                // TODO: dispose managed state (managed objects).
-            }
-
-            // TODO: free unmanaged resources (unmanaged objects) and override a finalizer below.
-            // TODO: set large fields to null.
-
-            _disposed = true;
+            ProcessMmResult(() => MidiOutWinApi.midiOutShortMsg(_handle, (uint)message));
         }
 
         #endregion

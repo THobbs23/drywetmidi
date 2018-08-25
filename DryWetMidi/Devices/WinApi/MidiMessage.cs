@@ -1,5 +1,6 @@
 ﻿namespace Melanchall.DryWetMidi.Devices
 {
+    // TODO: filter out
     internal enum MidiMessage : int
     {
         MM_MIM_CLOSE = 962,
@@ -15,6 +16,10 @@
         MIM_LONGDATA = MM_MIM_LONGDATA,
         MIM_LONGERROR = MM_MIM_LONGERROR,
         MIM_MOREDATA = MM_MIM_MOREDATA,
-        MIM_OPEN = MM_MIM_OPEN
+        MIM_OPEN = MM_MIM_OPEN,
+        MM_MOM_CLOSE = 968,
+        MM_MOM_DONE = 969,
+        MM_MOM_OPEN = 967,
+        MM_MOM_POSITIONCB = 970
     }
 }

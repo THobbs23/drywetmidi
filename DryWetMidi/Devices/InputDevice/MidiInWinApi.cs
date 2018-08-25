@@ -19,14 +19,6 @@ namespace Melanchall.DryWetMidi.Devices
             public uint dwSupport;
         }
 
-        internal delegate void MidiInProc(IntPtr hMidiIn, MidiMessage wMsg, IntPtr dwInstance, IntPtr dwParam1, IntPtr dwParam2);
-
-        #endregion
-
-        #region Constants
-
-        public const uint MAXERRORLENGTH = 256;
-
         #endregion
 
         #region Methods
@@ -41,7 +33,7 @@ namespace Melanchall.DryWetMidi.Devices
         public static extern int midiInGetNumDevs();
 
         [DllImport("winmm.dll")]
-        public static extern MMRESULT midiInOpen(out IntPtr lphMidiIn, uint uDeviceID, MidiInProc dwCallback, IntPtr dwInstance, CALLBACK dwFlags);
+        public static extern MMRESULT midiInOpen(out IntPtr lphMidiIn, uint uDeviceID, MidiWinApi.MidiMessageCallback dwCallback, IntPtr dwInstance, uint dwFlags);
 
         [DllImport("winmm.dll")]
         public static extern MMRESULT midiInClose(IntPtr hMidiIn);

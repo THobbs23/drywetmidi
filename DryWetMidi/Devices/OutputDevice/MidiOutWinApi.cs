@@ -6,16 +6,10 @@ namespace Melanchall.DryWetMidi.Devices
 {
     internal static class MidiOutWinApi
     {
-        #region Constants
-
-        public const uint MAXERRORLENGTH = 256;
-
-        #endregion
-
         #region Types
 
         [StructLayout(LayoutKind.Sequential)]
-        internal struct MIDIOUTCAPS
+        public struct MIDIOUTCAPS
         {
             public ushort wMid;
             public ushort wPid;
@@ -27,6 +21,15 @@ namespace Melanchall.DryWetMidi.Devices
             public ushort wNotes;
             public ushort wChannelMask;
             public uint dwSupport;
+        }
+
+        [Flags]
+        public enum MIDICAPS : uint
+        {
+            MIDICAPS_VOLUME = 1,
+            MIDICAPS_LRVOLUME = 2,
+            MIDICAPS_CACHE = 4,
+            MIDICAPS_STREAM = 8
         }
 
         #endregion
@@ -41,6 +44,15 @@ namespace Melanchall.DryWetMidi.Devices
 
         [DllImport("winmm.dll", SetLastError = true)]
         public static extern int midiOutGetNumDevs();
+
+        [DllImport("winmm.dll")]
+        public static extern MMRESULT midiOutOpen(out IntPtr lphmo, uint uDeviceID, MidiWinApi.MidiMessageCallback dwCallback, IntPtr dwInstance, uint dwFlags);
+
+        [DllImport("winmm.dll")]
+        public static extern MMRESULT midiOutClose(IntPtr hmo);
+
+        [DllImport("winmm.dll")]
+        public static extern MMRESULT midiOutShortMsg(IntPtr hMidiOut, uint dwMsg);
 
         #endregion
     }

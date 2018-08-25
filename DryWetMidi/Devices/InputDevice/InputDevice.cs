@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,24 +10,15 @@ namespace Melanchall.DryWetMidi.Devices
 {
     public sealed class InputDevice : MidiDevice
     {
-        #region Constants
+        #region Fields
 
-        private const int ParameterBufferSize = 2;
-        private static readonly ReadingSettings ReadingSettings = new ReadingSettings();
+        private DateTime _startTime;
 
         #endregion
 
         #region Events
 
-        public event EventHandler<EventReceivedEventArgs> EventReceived;
-
-        #endregion
-
-        #region Fields
-
-        private readonly MemoryStream _memoryStream = new MemoryStream(ParameterBufferSize);
-        private DateTime _startTime;
-        private readonly MidiReader _midiReader;
+        public event EventHandler<MidiEventReceivedEventArgs> EventReceived;
 
         #endregion
 
@@ -37,8 +27,6 @@ namespace Melanchall.DryWetMidi.Devices
         internal InputDevice(uint id)
             : base(id)
         {
-            _midiReader = new MidiReader(_memoryStream);
-
             SetDeviceInformation();
         }
 
@@ -50,7 +38,7 @@ namespace Melanchall.DryWetMidi.Devices
         {
             EnsureDeviceIsNotDisposed();
 
-            ProcessMmResult(() => MidiInWinApi.midiInOpen(out _handle, _id, OnMessage, IntPtr.Zero, CALLBACK.CALLBACK_FUNCTION));
+            Open();
             ProcessMmResult(() => MidiInWinApi.midiInStart(_handle));
             _startTime = DateTime.UtcNow;
         }
@@ -96,41 +84,24 @@ namespace Melanchall.DryWetMidi.Devices
             return GetAll().FirstOrDefault(d => d.Name == name);
         }
 
-        private void OnEventReceived(EventReceivedEventArgs args)
+        protected override void OnEvent(MidiEvent midiEvent, int milliseconds)
         {
-            EventReceived?.Invoke(this, args);
+            EventReceived?.Invoke(this, new MidiEventReceivedEventArgs(midiEvent, _startTime.AddMilliseconds(milliseconds)));
         }
 
-        private void OnMessage(IntPtr hMidiIn, MidiMessage wMsg, IntPtr dwInstance, IntPtr dwParam1, IntPtr dwParam2)
+        internal override MMRESULT OpenDevice(out IntPtr lpmidi, uint uDeviceID, MidiWinApi.MidiMessageCallback dwCallback, IntPtr dwInstance, uint dwFlags)
         {
-            var parameter1 = dwParam1.ToInt32();
-            var parameter2 = dwParam2.ToInt32();
-
-            var messageTime = _startTime.AddMilliseconds(parameter2);
-
-            switch (wMsg)
-            {
-                case MidiMessage.MIM_DATA:
-                    OnMessage(parameter1 & 0xFF00, messageTime);
-                    break;
-
-                case MidiMessage.MIM_ERROR:
-                    break;
-            }
+            return MidiInWinApi.midiInOpen(out lpmidi, uDeviceID, dwCallback, dwInstance, dwFlags);
         }
 
-        private void OnMessage(int message, DateTime messageTime)
+        internal override MMRESULT CloseDevice(IntPtr hmidi)
         {
-            _memoryStream.Seek(0, SeekOrigin.Begin);
-            _memoryStream.WriteByte((byte)(message & 0xFF00));
-            _memoryStream.WriteByte((byte)(message >> 16));
-            _memoryStream.Seek(0, SeekOrigin.Begin);
+            return MidiInWinApi.midiInClose(hmidi);
+        }
 
-            var statusByte = (byte)(message & 0xFF);
-            var eventReader = EventReaderFactory.GetReader(statusByte);
-            var midiEvent = eventReader.Read(_midiReader, ReadingSettings, statusByte);
-
-            OnEventReceived(new EventReceivedEventArgs(midiEvent, messageTime));
+        internal override MMRESULT GetErrorText(MMRESULT mmrError, StringBuilder pszText, uint cchText)
+        {
+            return MidiInWinApi.midiInGetErrorText(mmrError, pszText, cchText);
         }
 
         private void SetDeviceInformation()
@@ -139,44 +110,6 @@ namespace Melanchall.DryWetMidi.Devices
             ProcessMmResult(() => MidiInWinApi.midiInGetDevCaps(new UIntPtr(_id), ref caps, (uint)Marshal.SizeOf(caps)));
 
             SetBasicDeviceInformation(caps.wMid, caps.wPid, caps.vDriverVersion, caps.szPname);
-        }
-
-        private static void ProcessMmResult(Func<MMRESULT> method)
-        {
-            var mmResult = method();
-            if (mmResult == MMRESULT.MMSYSERR_NOERROR)
-                return;
-
-            var stringBuilder = new StringBuilder((int)MidiInWinApi.MAXERRORLENGTH);
-            var getErrorTextResult = MidiInWinApi.midiInGetErrorText(mmResult, stringBuilder, MidiInWinApi.MAXERRORLENGTH + 1);
-            if (getErrorTextResult != MMRESULT.MMSYSERR_NOERROR)
-                throw new MidiDeviceException("Error occured but failed to get description for it.");
-
-            var errorText = stringBuilder.ToString();
-            throw new MidiDeviceException(errorText);
-        }
-
-        #endregion
-
-        #region IDisposable
-
-        protected override void Dispose(bool disposing)
-        {
-            if (_disposed)
-                return;
-
-            if (disposing)
-            {
-                if (_handle == IntPtr.Zero)
-                    return;
-
-                MidiInWinApi.midiInClose(_handle);
-
-                _memoryStream.Dispose();
-                _midiReader.Dispose();
-            }
-
-            _disposed = true;
         }
 
         #endregion
