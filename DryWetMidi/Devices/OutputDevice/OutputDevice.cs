@@ -18,19 +18,12 @@ namespace Melanchall.DryWetMidi.Devices
 
         #endregion
 
-        #region Events
-
-        public event EventHandler<MidiEventSentEventArgs> EventSent;
-
-        #endregion
-
         #region Fields
 
         private readonly MemoryStream _memoryStream = new MemoryStream(ChannelEventBufferSize);
         private readonly MidiWriter _midiWriter;
         private readonly WritingSettings _writingSettings = new WritingSettings();
-
-        private byte? _runningStatus = null;
+        private MidiWinApi.MidiMessageCallback _callback;
 
         #endregion
 
@@ -62,27 +55,19 @@ namespace Melanchall.DryWetMidi.Devices
 
         public bool SupportsVolumeControl { get; private set; }
 
-        public bool UseRunningStatus
-        {
-            get { return _writingSettings.CompressionPolicy.HasFlag(CompressionPolicy.UseRunningStatus); }
-            set { _writingSettings.CompressionPolicy &= ~CompressionPolicy.UseRunningStatus; }
-        }
-
         #endregion
 
         #region Methods
 
         public void SendEvent(MidiEvent midiEvent)
         {
-            EnsureDeviceIsNotDisposed();
-
             ThrowIfArgument.IsNull(nameof(midiEvent), midiEvent);
 
             if (midiEvent is MetaEvent)
                 throw new ArgumentException("Meta events cannot be sent via MIDI device.", nameof(midiEvent));
 
-            if (_handle == IntPtr.Zero)
-                Open();
+            EnsureDeviceIsNotDisposed();
+            EnsureHandleIsCreated();
 
             var channelEvent = midiEvent as ChannelEvent;
             if (channelEvent != null)
@@ -90,8 +75,6 @@ namespace Melanchall.DryWetMidi.Devices
                 SendChannelEvent(channelEvent);
                 return;
             }
-
-            _runningStatus = null;
 
             var sysExEvent = midiEvent as SysExEvent;
             if (sysExEvent != null)
@@ -120,24 +103,22 @@ namespace Melanchall.DryWetMidi.Devices
             return GetAll().FirstOrDefault(d => d.Name == name);
         }
 
-        protected override void OnEvent(MidiEvent midiEvent, int milliseconds)
+        public static OutputDevice GetDefault()
         {
-            EventSent?.Invoke(this, new MidiEventSentEventArgs(midiEvent));
+            return new OutputDevice(unchecked((uint)-1));
         }
 
-        internal override MMRESULT OpenDevice(out IntPtr lpmidi, uint uDeviceID, MidiWinApi.MidiMessageCallback dwCallback, IntPtr dwInstance, uint dwFlags)
+        private void EnsureHandleIsCreated()
         {
-            return MidiOutWinApi.midiOutOpen(out lpmidi, uDeviceID, dwCallback, dwInstance, dwFlags);
+            if (_handle != IntPtr.Zero)
+                return;
+
+            ProcessMmResult(() => MidiOutWinApi.midiOutOpen(out _handle, _id, _callback, IntPtr.Zero, MidiWinApi.CallbackFunction));
         }
 
-        internal override MMRESULT CloseDevice(IntPtr hmidi)
+        private void DestroyHandle()
         {
-            return MidiOutWinApi.midiOutClose(hmidi);
-        }
-
-        internal override MMRESULT GetErrorText(MMRESULT mmrError, StringBuilder pszText, uint cchText)
-        {
-            return MidiOutWinApi.midiOutGetErrorText(mmrError, pszText, cchText);
+            MidiOutWinApi.midiOutClose(_handle);
         }
 
         private void SetDeviceInformation()
@@ -167,16 +148,42 @@ namespace Melanchall.DryWetMidi.Devices
             var eventWriter = EventWriterFactory.GetWriter(channelEvent);
 
             var statusByte = eventWriter.GetStatusByte(channelEvent);
-            var writeStatusByte = _runningStatus != statusByte || !UseRunningStatus;
-            _runningStatus = statusByte;
 
             WriteBytesToStream(_memoryStream, ZeroBuffer);
-            eventWriter.Write(channelEvent, _midiWriter, _writingSettings, writeStatusByte);
+            eventWriter.Write(channelEvent, _midiWriter, _writingSettings, true);
 
             var bytes = _memoryStream.GetBuffer();
             var message = bytes[0] + (bytes[1] << 8) + (bytes[2] << 16);
 
             ProcessMmResult(() => MidiOutWinApi.midiOutShortMsg(_handle, (uint)message));
+        }
+
+        #endregion
+
+        #region Overrides
+
+        protected override void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
+            {
+                if (_handle == IntPtr.Zero)
+                    return;
+
+                DestroyHandle();
+
+                _memoryStream.Dispose();
+                _midiWriter.Dispose();
+            }
+
+            _disposed = true;
+        }
+
+        internal override MMRESULT GetErrorText(MMRESULT mmrError, StringBuilder pszText, uint cchText)
+        {
+            return MidiOutWinApi.midiOutGetErrorText(mmrError, pszText, cchText);
         }
 
         #endregion
