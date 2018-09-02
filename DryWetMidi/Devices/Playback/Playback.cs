@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Melanchall.DryWetMidi.Common;
 using Melanchall.DryWetMidi.Smf;
@@ -6,7 +8,7 @@ using Melanchall.DryWetMidi.Smf.Interaction;
 
 namespace Melanchall.DryWetMidi.Devices
 {
-    public sealed class Playback
+    public sealed class Playback : IDisposable
     {
         #region Constants
 
@@ -16,13 +18,15 @@ namespace Melanchall.DryWetMidi.Devices
 
         #region Fields
 
-        private readonly IEnumerable<TimedEvent> _events;
         private readonly IEnumerator<TimedEvent> _eventsEnumerator;
 
         private readonly TempoMap _tempoMap;
         private readonly OutputDevice _outputDevice;
 
         private readonly MidiClock _clock;
+        private readonly HashSet<NoteId> _noteIds = new HashSet<NoteId>();
+
+        private bool _disposed = false;
 
         #endregion
 
@@ -30,8 +34,8 @@ namespace Melanchall.DryWetMidi.Devices
 
         private Playback(IEnumerable<IEnumerable<MidiEvent>> events, TempoMap tempoMap, OutputDevice outputDevice)
         {
-            _events = events.Select(e => new TrackChunk(e.OfType<ChannelEvent>())).GetTimedEvents();
-            _eventsEnumerator = _events.GetEnumerator();
+            var timedEvents = events.Select(e => new TrackChunk(e.OfType<ChannelEvent>())).GetTimedEvents();
+            _eventsEnumerator = timedEvents.GetEnumerator();
             _eventsEnumerator.MoveNext();
 
             _tempoMap = tempoMap;
@@ -43,21 +47,46 @@ namespace Melanchall.DryWetMidi.Devices
 
         #endregion
 
+        #region Finalizer
+
+        ~Playback()
+        {
+            Dispose(false);
+        }
+
+        #endregion
+
+        #region Properties
+
+        public bool Repeat { get; set; }
+
+        #endregion
+
         #region Methods
 
         public void Start()
         {
+            EnsureIsNotDisposed();
+
+            WarmUpDevice();
+
             _clock.Start();
         }
 
         public void Stop()
         {
+            EnsureIsNotDisposed();
+
             _clock.Stop();
+            StopCurrentNotes();
         }
 
         public void Pause()
         {
+            EnsureIsNotDisposed();
+
             _clock.Pause();
+            StopCurrentNotes();
         }
 
         public static Playback Create(IEnumerable<IEnumerable<MidiEvent>> events, TempoMap tempoMap, OutputDevice outputDevice)
@@ -71,6 +100,9 @@ namespace Melanchall.DryWetMidi.Devices
 
         private void OnClockTick(object sender, TickEventArgs e)
         {
+            if (_clock.State != MidiClockState.Running)
+                return;
+
             var ticks = e.Ticks;
 
             do
@@ -82,11 +114,72 @@ namespace Melanchall.DryWetMidi.Devices
                 if (timedEvent.Time > ticks)
                     return;
 
-                _outputDevice.SendEvent(timedEvent.Event);
+                var midiEvent = timedEvent.Event;
+
+                var noteOnEvent = midiEvent as NoteOnEvent;
+                if (noteOnEvent != null)
+                    _noteIds.Add(noteOnEvent.GetNoteId());
+
+                var noteOffEvent = midiEvent as NoteOffEvent;
+                if (noteOffEvent != null)
+                    _noteIds.Remove(noteOffEvent.GetNoteId());
+
+                _outputDevice.SendEvent(midiEvent);
             }
             while (_eventsEnumerator.MoveNext());
 
-            Stop();
+            if (!Repeat)
+                Stop();
+
+            _clock.Restart();
+            _eventsEnumerator.Reset();
+            _eventsEnumerator.MoveNext();
+        }
+
+        private void EnsureIsNotDisposed()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException("Playback is disposed.");
+        }
+
+        private void WarmUpDevice()
+        {
+            _outputDevice.SendEvent(new NoteOnEvent((SevenBitNumber)0, (SevenBitNumber)0));
+            _outputDevice.SendEvent(new NoteOffEvent((SevenBitNumber)0, (SevenBitNumber)0));
+        }
+
+        private void StopCurrentNotes()
+        {
+            foreach (var noteId in _noteIds)
+            {
+                _outputDevice.SendEvent(new NoteOffEvent(noteId.NoteNumber, (SevenBitNumber)0) { Channel = noteId.Channel });
+            }
+        }
+
+        #endregion
+
+        #region IDisposable
+
+        public void Dispose()
+        {
+            Dispose(true);
+        }
+
+        private void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
+            {
+                Stop();
+
+                _clock.Tick -= OnClockTick;
+                _clock.Dispose();
+                _eventsEnumerator.Dispose();
+            }
+
+            _disposed = true;
         }
 
         #endregion

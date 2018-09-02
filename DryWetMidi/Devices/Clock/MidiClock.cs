@@ -98,6 +98,12 @@ namespace Melanchall.DryWetMidi.Devices
             StopTimer();
         }
 
+        public void Restart()
+        {
+            Stop();
+            Start();
+        }
+
         private void OnTick(uint uID, uint uMsg, uint dwUser, uint dw1, uint dw2)
         {
             var elapsed = _stopwatch.Elapsed;
