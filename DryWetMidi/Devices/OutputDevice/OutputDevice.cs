@@ -60,47 +60,6 @@ namespace Melanchall.DryWetMidi.Devices
 
         #region Methods
 
-        public void PlayEvents(TimeDivision timeDivision, IEnumerable<MidiEvent> midiEvents)
-        {
-            ThrowIfArgument.IsNull(nameof(timeDivision), timeDivision);
-            ThrowIfArgument.IsNull(nameof(midiEvents), midiEvents);
-
-            _callback = OnMessage;
-            var idForRef = _id;
-            ProcessMmResult(() => MidiOutWinApi.midiStreamOpen(ref _streamHandle, ref idForRef, 1, _callback, IntPtr.Zero, MidiWinApi.CallbackFunction));
-            ProcessMmResult(() => MidiOutWinApi.midiStreamRestart(_streamHandle));
-
-            foreach (var midiEvent in midiEvents.Where(e => e != null))
-            {
-                var eventStruct = default(MidiOutWinApi.MIDIEVENT);
-
-                var channelEvent = midiEvent as ChannelEvent;
-                if (channelEvent != null)
-                    eventStruct = CreateChannelEventStructure(channelEvent);
-
-                var eventBytes = GetEventBytes(eventStruct);
-
-                var hdrStruct = new MidiOutWinApi.MIDIHDR
-                {
-                    lpData = Marshal.AllocHGlobal(eventBytes.Length),
-                    dwBufferLength = Marshal.SizeOf(eventStruct),
-                    dwBytesRecorded = Marshal.SizeOf(eventStruct)
-                };
-                Marshal.Copy(eventBytes, 0, hdrStruct.lpData, eventBytes.Length);
-
-                ProcessMmResult(() => MidiOutWinApi.midiOutPrepareHeader(_streamHandle, ref hdrStruct, Marshal.SizeOf(hdrStruct)));
-                ProcessMmResult(() => MidiOutWinApi.midiStreamOut(_streamHandle, ref hdrStruct, Marshal.SizeOf(hdrStruct)));
-                // ProcessMmResult(() => MidiOutWinApi.midiOutUnprepareHeader(_streamHandle, ref hdrStruct, Marshal.SizeOf(hdrStruct)));
-
-                Marshal.FreeHGlobal(hdrStruct.lpData);
-            }
-        }
-
-        public void PlayEvents(TimeDivision timeDivision, params MidiEvent[] midiEvents)
-        {
-            PlayEvents(timeDivision, midiEvents as IEnumerable<MidiEvent>);
-        }
-
         public void SendEvent(MidiEvent midiEvent)
         {
             ThrowIfArgument.IsNull(nameof(midiEvent), midiEvent);
@@ -147,25 +106,9 @@ namespace Melanchall.DryWetMidi.Devices
             return new OutputDevice(unchecked((uint)-1));
         }
 
-        private static byte[] GetEventBytes(MidiOutWinApi.MIDIEVENT eventStruct)
+        internal void PrepareForEventsSending()
         {
-            int size = Marshal.SizeOf(eventStruct);
-            byte[] arr = new byte[size];
-
-            IntPtr ptr = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(eventStruct, ptr, true);
-            Marshal.Copy(ptr, arr, 0, size);
-            Marshal.FreeHGlobal(ptr);
-            return arr;
-        }
-
-        private MidiOutWinApi.MIDIEVENT CreateChannelEventStructure(ChannelEvent channelEvent)
-        {
-            return new MidiOutWinApi.MIDIEVENT
-            {
-                dwDeltaTime = (uint)channelEvent.DeltaTime,
-                dwEvent = MidiOutWinApi.MEVT_F_SHORT | (MidiOutWinApi.MEVT_SHORTMSG << 24) | (uint)PackChannelEvent(channelEvent)
-            };
+            EnsureHandleIsCreated();
         }
 
         private void EnsureHandleIsCreated()

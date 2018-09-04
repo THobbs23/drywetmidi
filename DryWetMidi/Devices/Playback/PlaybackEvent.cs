@@ -1,8 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Melanchall.DryWetMidi.Smf;
 
 namespace Melanchall.DryWetMidi.Devices
@@ -11,10 +7,11 @@ namespace Melanchall.DryWetMidi.Devices
     {
         #region Constructor
 
-        public PlaybackEvent(MidiEvent midiEvent, TimeSpan time)
+        public PlaybackEvent(MidiEvent midiEvent, TimeSpan time, long rawTime)
         {
             Event = midiEvent;
             Time = time;
+            RawTime = rawTime;
         }
 
         #endregion
@@ -24,6 +21,8 @@ namespace Melanchall.DryWetMidi.Devices
         public MidiEvent Event { get; }
 
         public TimeSpan Time { get; }
+
+        public long RawTime { get; }
 
         #endregion
     }

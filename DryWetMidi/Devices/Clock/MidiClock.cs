@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using Melanchall.DryWetMidi.Smf.Interaction;
 
 namespace Melanchall.DryWetMidi.Devices
 {
@@ -48,7 +47,9 @@ namespace Melanchall.DryWetMidi.Devices
 
         public MidiClockState State { get; private set; }
 
-        public TimeSpan Time { get; set; } = TimeSpan.Zero;
+        public TimeSpan StartTime { get; set; } = TimeSpan.Zero;
+
+        public TimeSpan CurrentTime { get; private set; } = TimeSpan.Zero;
 
         #endregion
 
@@ -90,7 +91,8 @@ namespace Melanchall.DryWetMidi.Devices
         {
             State = MidiClockState.Stopped;
             StopTimer();
-            Time = TimeSpan.Zero;
+            StartTime = TimeSpan.Zero;
+            CurrentTime = TimeSpan.Zero;
         }
 
         public void Pause()
@@ -107,7 +109,8 @@ namespace Melanchall.DryWetMidi.Devices
 
         private void OnTick(uint uID, uint uMsg, uint dwUser, uint dw1, uint dw2)
         {
-            Tick?.Invoke(this, new TickEventArgs(_stopwatch.Elapsed + Time));
+            CurrentTime = _stopwatch.Elapsed + StartTime;
+            Tick?.Invoke(this, new TickEventArgs(CurrentTime));
         }
 
         private void StopTimer()

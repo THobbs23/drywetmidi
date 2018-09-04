@@ -16,7 +16,7 @@ namespace Melanchall.DryWetMidi.Devices
             ThrowIfArgument.IsNull(nameof(tempoMap), tempoMap);
             ThrowIfArgument.IsNull(nameof(outputDevice), outputDevice);
 
-            return Playback.Create(new[] { trackChunk.Events }, tempoMap, outputDevice);
+            return new Playback(trackChunk.Events, tempoMap, outputDevice);
         }
 
         public static Playback GetPlayback(this IEnumerable<TrackChunk> trackChunks, TempoMap tempoMap, OutputDevice outputDevice)
@@ -25,7 +25,7 @@ namespace Melanchall.DryWetMidi.Devices
             ThrowIfArgument.IsNull(nameof(tempoMap), tempoMap);
             ThrowIfArgument.IsNull(nameof(outputDevice), outputDevice);
 
-            return Playback.Create(trackChunks.Select(c => c.Events), tempoMap, outputDevice);
+            return new Playback(trackChunks.Select(c => c.Events), tempoMap, outputDevice);
         }
 
         public static Playback GetPlayback(this MidiFile midiFile, OutputDevice outputDevice)
