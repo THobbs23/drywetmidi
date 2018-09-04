@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using Melanchall.DryWetMidi.Common;
 using Melanchall.DryWetMidi.Smf;
@@ -18,7 +17,7 @@ namespace Melanchall.DryWetMidi.Devices
 
         #region Fields
 
-        private readonly IEnumerator<TimedEvent> _eventsEnumerator;
+        private readonly IEnumerator<PlaybackEvent> _eventsEnumerator;
 
         private readonly TempoMap _tempoMap;
         private readonly OutputDevice _outputDevice;
@@ -34,14 +33,13 @@ namespace Melanchall.DryWetMidi.Devices
 
         private Playback(IEnumerable<IEnumerable<MidiEvent>> events, TempoMap tempoMap, OutputDevice outputDevice)
         {
-            var timedEvents = events.Select(e => new TrackChunk(e.OfType<ChannelEvent>())).GetTimedEvents();
-            _eventsEnumerator = timedEvents.GetEnumerator();
+            _eventsEnumerator = GetPlaybackEvents(events, tempoMap).GetEnumerator();
             _eventsEnumerator.MoveNext();
 
             _tempoMap = tempoMap;
             _outputDevice = outputDevice;
 
-            _clock = new MidiClock(ClockInterval, tempoMap);
+            _clock = new MidiClock(ClockInterval);
             _clock.Tick += OnClockTick;
         }
 
@@ -58,7 +56,9 @@ namespace Melanchall.DryWetMidi.Devices
 
         #region Properties
 
-        public bool Repeat { get; set; }
+        public bool Loop { get; set; }
+
+        public bool InterruptNotesOnStop { get; set; } = true;
 
         #endregion
 
@@ -67,6 +67,9 @@ namespace Melanchall.DryWetMidi.Devices
         public void Start()
         {
             EnsureIsNotDisposed();
+
+            if (_clock.State == MidiClockState.Running)
+                return;
 
             WarmUpDevice();
 
@@ -77,16 +80,40 @@ namespace Melanchall.DryWetMidi.Devices
         {
             EnsureIsNotDisposed();
 
+            if (_clock.State == MidiClockState.Stopped)
+                return;
+
             _clock.Stop();
-            StopCurrentNotes();
+            InterruptNotes();
         }
 
         public void Pause()
         {
             EnsureIsNotDisposed();
 
+            if (_clock.State == MidiClockState.Paused)
+                return;
+
             _clock.Pause();
-            StopCurrentNotes();
+            InterruptNotes();
+        }
+
+        public void MoveToTime(ITimeSpan time)
+        {
+            ThrowIfArgument.IsNull(nameof(time), time);
+
+            Stop();
+
+            _clock.Time = TimeConverter.ConvertTo<MetricTimeSpan>(time, _tempoMap);
+
+            _eventsEnumerator.Reset();
+            do
+            {
+                _eventsEnumerator.MoveNext();
+            }
+            while (_eventsEnumerator.Current.Time < _clock.Time);
+
+            Start();
         }
 
         public static Playback Create(IEnumerable<IEnumerable<MidiEvent>> events, TempoMap tempoMap, OutputDevice outputDevice)
@@ -100,10 +127,7 @@ namespace Melanchall.DryWetMidi.Devices
 
         private void OnClockTick(object sender, TickEventArgs e)
         {
-            if (_clock.State != MidiClockState.Running)
-                return;
-
-            var ticks = e.Ticks;
+            var time = e.Time;
 
             do
             {
@@ -111,7 +135,7 @@ namespace Melanchall.DryWetMidi.Devices
                 if (timedEvent == null)
                     continue;
 
-                if (timedEvent.Time > ticks)
+                if (timedEvent.Time > time)
                     return;
 
                 var midiEvent = timedEvent.Event;
@@ -124,11 +148,14 @@ namespace Melanchall.DryWetMidi.Devices
                 if (noteOffEvent != null)
                     _noteIds.Remove(noteOffEvent.GetNoteId());
 
+                if (_clock.State != MidiClockState.Running)
+                    return;
+
                 _outputDevice.SendEvent(midiEvent);
             }
             while (_eventsEnumerator.MoveNext());
 
-            if (!Repeat)
+            if (!Loop)
                 Stop();
 
             _clock.Restart();
@@ -148,12 +175,23 @@ namespace Melanchall.DryWetMidi.Devices
             _outputDevice.SendEvent(new NoteOffEvent((SevenBitNumber)0, (SevenBitNumber)0));
         }
 
-        private void StopCurrentNotes()
+        private void InterruptNotes()
         {
+            if (!InterruptNotesOnStop)
+                return;
+
             foreach (var noteId in _noteIds)
             {
-                _outputDevice.SendEvent(new NoteOffEvent(noteId.NoteNumber, (SevenBitNumber)0) { Channel = noteId.Channel });
+                _outputDevice.SendEvent(new NoteOffEvent(noteId.NoteNumber, SevenBitNumber.MinValue) { Channel = noteId.Channel });
             }
+        }
+
+        private static IEnumerable<PlaybackEvent> GetPlaybackEvents(IEnumerable<IEnumerable<MidiEvent>> events, TempoMap tempoMap)
+        {
+            return events.Select(e => new TrackChunk(e.Where(midiEvent => !(midiEvent is MetaEvent))))
+                         .GetTimedEvents()
+                         .Select(e => new PlaybackEvent(e.Event, e.TimeAs<MetricTimeSpan>(tempoMap)))
+                         .ToList();
         }
 
         #endregion

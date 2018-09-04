@@ -18,7 +18,6 @@ namespace Melanchall.DryWetMidi.Devices
         private bool _disposed = false;
 
         private readonly uint _interval;
-        private readonly TempoMap _tempoMap;
         private readonly Stopwatch _stopwatch = new Stopwatch();
 
         private uint _resolution;
@@ -29,10 +28,9 @@ namespace Melanchall.DryWetMidi.Devices
 
         #region Constructor
 
-        public MidiClock(uint interval, TempoMap tempoMap)
+        public MidiClock(uint interval)
         {
             _interval = interval;
-            _tempoMap = tempoMap;
         }
 
         #endregion
@@ -49,6 +47,8 @@ namespace Melanchall.DryWetMidi.Devices
         #region Properties
 
         public MidiClockState State { get; private set; }
+
+        public TimeSpan Time { get; set; } = TimeSpan.Zero;
 
         #endregion
 
@@ -90,6 +90,7 @@ namespace Melanchall.DryWetMidi.Devices
         {
             State = MidiClockState.Stopped;
             StopTimer();
+            Time = TimeSpan.Zero;
         }
 
         public void Pause()
@@ -106,10 +107,7 @@ namespace Melanchall.DryWetMidi.Devices
 
         private void OnTick(uint uID, uint uMsg, uint dwUser, uint dw1, uint dw2)
         {
-            var elapsed = _stopwatch.Elapsed;
-            var ticks = TimeConverter.ConvertFrom((MetricTimeSpan)elapsed, _tempoMap);
-
-            Tick?.Invoke(this, new TickEventArgs(ticks));
+            Tick?.Invoke(this, new TickEventArgs(_stopwatch.Elapsed + Time));
         }
 
         private void StopTimer()

@@ -105,9 +105,6 @@ namespace Melanchall.DryWetMidi.Devices
         {
             ThrowIfArgument.IsNull(nameof(midiEvent), midiEvent);
 
-            if (midiEvent is MetaEvent)
-                throw new ArgumentException("Meta events cannot be sent via MIDI device.", nameof(midiEvent));
-
             EnsureDeviceIsNotDisposed();
             EnsureHandleIsCreated();
 

@@ -6,16 +6,16 @@ namespace Melanchall.DryWetMidi.Devices
     {
         #region Constructor
 
-        public TickEventArgs(long ticks)
+        public TickEventArgs(TimeSpan time)
         {
-            Ticks = ticks;
+            Time = time;
         }
 
         #endregion
 
         #region Properties
 
-        public long Ticks { get; }
+        public TimeSpan Time { get; }
 
         #endregion
     }
